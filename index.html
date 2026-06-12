@@ -16,6 +16,22 @@
           <p>A-Level prep tracker</p>
         </div>
       </div>
+
+      <div class="account-panel" aria-label="Account and sync">
+        <div class="sync-pill" id="syncStatus" data-status="offline">
+          <span class="sync-dot" aria-hidden="true"></span>
+          <span id="syncStatusText">Offline</span>
+        </div>
+        <div class="profile-card signed-out" id="profileCard">
+          <div class="profile-copy">
+            <strong>Not signed in</strong>
+            <span>Local backup active</span>
+          </div>
+        </div>
+        <button class="primary-btn account-btn" id="signInBtn" type="button">Sign in with Google</button>
+        <button class="ghost-btn account-btn hidden" id="signOutBtn" type="button">Sign Out</button>
+      </div>
+
       <nav class="nav-list" aria-label="Main navigation">
         <button class="nav-item active" data-view="dashboard" type="button">
           <span class="nav-icon">D</span><span>Dashboard</span>
@@ -122,11 +138,20 @@
           </section>
           <section class="glass-panel">
             <p class="panel-kicker">Data</p>
-            <h3>Manage Local Tracker</h3>
-            <p class="muted">Changes are saved automatically in this browser using Local Storage.</p>
+            <h3>Manage Tracker</h3>
+            <p class="muted">Changes are saved locally and sync to your account when signed in.</p>
             <div class="button-row">
               <button class="ghost-btn" id="loadSampleBtn" type="button">Load Sample Syllabus</button>
               <button class="danger-btn" id="resetAllBtn" type="button">Reset All Data</button>
+            </div>
+          </section>
+          <section class="glass-panel account-settings">
+            <p class="panel-kicker">Cloud</p>
+            <h3>Account Sync</h3>
+            <p class="muted" id="cloudHelpText">Sign in to sync this tracker across your devices.</p>
+            <div class="button-row">
+              <button class="primary-btn" id="settingsSignInBtn" type="button">Sign in with Google</button>
+              <button class="ghost-btn hidden" id="settingsSignOutBtn" type="button">Sign Out</button>
             </div>
           </section>
           <section class="glass-panel shortcuts-panel">
@@ -172,6 +197,10 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite"></div>
   <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
