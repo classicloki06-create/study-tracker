@@ -98,6 +98,11 @@ img {
   letter-spacing: 0;
   box-shadow: 0 14px 34px rgba(59, 130, 246, 0.34);
   flex: 0 0 auto;
+  .brand-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+}
 }
 
 .brand h1,
