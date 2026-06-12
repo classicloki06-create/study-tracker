@@ -8,6 +8,15 @@
     subjects: []
   };
 
+  const firebaseConfig = {
+    apiKey: "AIzaSyDuCZskv_60ZvBhjPVAzwOj80Vsgb8lLX0",
+    authDomain: "study-tracker-19314.firebaseapp.com",
+    projectId: "study-tracker-19314",
+    storageBucket: "study-tracker-19314.firebasestorage.app",
+    messagingSenderId: "899168558348",
+    appId: "1:899168558348:web:5790424c73786c1cf4fd29"
+  };
+
   const els = {
     sidebar: document.getElementById("sidebar"),
     menuToggle: document.getElementById("menuToggle"),
@@ -38,6 +47,14 @@
     loadSampleBtn: document.getElementById("loadSampleBtn"),
     resetAllBtn: document.getElementById("resetAllBtn"),
     streakCount: document.getElementById("streakCount"),
+    syncStatus: document.getElementById("syncStatus"),
+    syncStatusText: document.getElementById("syncStatusText"),
+    profileCard: document.getElementById("profileCard"),
+    signInBtn: document.getElementById("signInBtn"),
+    signOutBtn: document.getElementById("signOutBtn"),
+    settingsSignInBtn: document.getElementById("settingsSignInBtn"),
+    settingsSignOutBtn: document.getElementById("settingsSignOutBtn"),
+    cloudHelpText: document.getElementById("cloudHelpText"),
     modal: document.getElementById("entityModal"),
     form: document.getElementById("entityForm"),
     modalTitle: document.getElementById("modalTitle"),
@@ -60,7 +77,22 @@
     expandedTopics: new Set(),
     modal: null,
     draggedTopic: null,
-    draggedSubtopic: null
+    draggedSubtopic: null,
+    localRevision: 0
+  };
+
+  const cloud = {
+    enabled: false,
+    auth: null,
+    db: null,
+    user: null,
+    ready: false,
+    applyingRemote: false,
+    syncTimer: null,
+    syncInFlight: false,
+    pendingSync: false,
+    authToken: 0,
+    lastSyncedRevision: 0
   };
 
   function uid(prefix) {
@@ -69,15 +101,6 @@
 
   function todayKey() {
     return new Date().toISOString().slice(0, 10);
-  }
-
-  function nowText() {
-    return new Date().toLocaleString([], {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit"
-    });
   }
 
   function sampleData() {
@@ -145,11 +168,12 @@
   }
 
   function normalizeData(data) {
+    const source = data && typeof data === "object" ? data : EMPTY_DATA;
     return {
       version: 1,
-      streak: data.streak || { count: 0, lastStudyDate: null },
-      recent: Array.isArray(data.recent) ? data.recent.slice(0, 12) : [],
-      subjects: (data.subjects || []).map(subject => ({
+      streak: source.streak || { count: 0, lastStudyDate: null },
+      recent: Array.isArray(source.recent) ? source.recent.slice(0, 12) : [],
+      subjects: (source.subjects || []).map(subject => ({
         id: subject.id || uid("subject"),
         name: subject.name || "Untitled Subject",
         icon: subject.icon || subject.name?.charAt(0)?.toUpperCase() || "S",
@@ -184,13 +208,217 @@
     const beforeComplete = new Map(state.data.subjects.map(subject => [subject.id, subjectStats(subject).percent]));
     fn();
     state.data = normalizeData(state.data);
+    state.localRevision += 1;
     saveData();
     render();
+    scheduleCloudSync();
     if (message) toast(message);
     for (const subject of state.data.subjects) {
       const previous = beforeComplete.get(subject.id) || 0;
       const current = subjectStats(subject).percent;
       if (previous < 100 && current === 100) showConfetti();
+    }
+  }
+
+  function initFirebase() {
+    if (!window.firebase?.initializeApp) {
+      setSyncStatus("offline", "Local only");
+      return;
+    }
+
+    try {
+      firebase.initializeApp(firebaseConfig);
+      cloud.auth = firebase.auth();
+      cloud.db = firebase.firestore();
+      cloud.enabled = true;
+      cloud.auth.onAuthStateChanged(handleAuthStateChange);
+      setSyncStatus(navigator.onLine ? "offline" : "offline", "Offline");
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error", "Firebase unavailable");
+      toast("Firebase could not be initialized.");
+    }
+  }
+
+  async function handleAuthStateChange(user) {
+    const token = ++cloud.authToken;
+    cloud.user = user;
+    cloud.ready = false;
+    clearTimeout(cloud.syncTimer);
+    cloud.pendingSync = false;
+    renderAuth();
+
+    if (!user) {
+      cloud.lastSyncedRevision = state.localRevision;
+      setSyncStatus(navigator.onLine ? "offline" : "offline", "Offline");
+      renderAuth();
+      return;
+    }
+
+    setSyncStatus("syncing", "Checking cloud...");
+
+    try {
+      const docRef = userDocRef();
+      const snap = await docRef.get();
+      if (token !== cloud.authToken) return;
+
+      if (snap.exists && isValidCloudData(snap.data())) {
+        cloud.applyingRemote = true;
+        state.data = normalizeData(snap.data());
+        state.localRevision += 1;
+        saveData();
+        cloud.applyingRemote = false;
+        cloud.ready = true;
+        cloud.lastSyncedRevision = state.localRevision;
+        render();
+        setSyncStatus("synced", "Synced");
+        toast("Cloud tracker loaded.");
+      } else {
+        cloud.ready = true;
+        await performCloudSync({ force: true, reason: "initial-upload" });
+        toast("Local tracker uploaded to your account.");
+      }
+    } catch (error) {
+      console.error(error);
+      cloud.ready = false;
+      setSyncStatus("error", "Sync failed");
+      toast("Could not check Firestore. Local backup is still saved.");
+    } finally {
+      cloud.applyingRemote = false;
+      renderAuth();
+    }
+  }
+
+  function isValidCloudData(data) {
+    return data && Array.isArray(data.subjects);
+  }
+
+  function userDocRef() {
+    if (!cloud.user || !cloud.db) return null;
+    return cloud.db.collection("users").doc(cloud.user.uid);
+  }
+
+  function userProfile(user = cloud.user) {
+    if (!user) return null;
+    return {
+      uid: user.uid,
+      displayName: user.displayName || "",
+      email: user.email || "",
+      photoURL: user.photoURL || ""
+    };
+  }
+
+  function cloudPayload() {
+    return {
+      ...normalizeData(state.data),
+      profile: userProfile(),
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    };
+  }
+
+  function scheduleCloudSync() {
+    if (!cloud.enabled || !cloud.user || !cloud.ready || cloud.applyingRemote) return;
+    clearTimeout(cloud.syncTimer);
+    cloud.syncTimer = setTimeout(() => {
+      performCloudSync({ reason: "change" });
+    }, 500);
+  }
+
+  async function performCloudSync({ force = false, reason = "change" } = {}) {
+    if (!cloud.enabled || !cloud.user || !cloud.ready || cloud.applyingRemote) return;
+    if (cloud.syncInFlight) {
+      cloud.pendingSync = true;
+      return;
+    }
+    if (!force && state.localRevision === cloud.lastSyncedRevision) return;
+
+    const writeRevision = state.localRevision;
+    cloud.syncInFlight = true;
+    cloud.pendingSync = false;
+    setSyncStatus("syncing", reason === "initial-upload" ? "Uploading..." : "Syncing...");
+
+    try {
+      await userDocRef().set(cloudPayload(), { merge: false });
+      cloud.lastSyncedRevision = writeRevision;
+      setSyncStatus("synced", "Synced");
+    } catch (error) {
+      console.error(error);
+      cloud.pendingSync = true;
+      setSyncStatus(navigator.onLine ? "error" : "offline", navigator.onLine ? "Sync failed" : "Offline");
+    } finally {
+      cloud.syncInFlight = false;
+      if (cloud.pendingSync || state.localRevision !== cloud.lastSyncedRevision) {
+        cloud.pendingSync = false;
+        scheduleCloudSync();
+      }
+    }
+  }
+
+  async function signInWithGoogle() {
+    if (!cloud.enabled) {
+      toast("Firebase is not available on this page.");
+      return;
+    }
+    try {
+      setSyncStatus("syncing", "Signing in...");
+      const provider = new firebase.auth.GoogleAuthProvider();
+      await cloud.auth.signInWithPopup(provider);
+    } catch (error) {
+      console.error(error);
+      setSyncStatus("error", "Sign-in failed");
+      toast("Google sign-in was not completed.");
+    }
+  }
+
+  async function signOut() {
+    if (!cloud.enabled) return;
+    try {
+      await performCloudSync({ force: true, reason: "sign-out" });
+      await cloud.auth.signOut();
+      toast("Signed out. Local backup remains available.");
+    } catch (error) {
+      console.error(error);
+      toast("Could not sign out. Please try again.");
+    }
+  }
+
+  function setSyncStatus(status, text) {
+    els.syncStatus.dataset.status = status;
+    els.syncStatusText.textContent = text;
+  }
+
+  function renderAuth() {
+    const user = cloud.user;
+    const signedIn = Boolean(user);
+    els.signInBtn.classList.toggle("hidden", signedIn);
+    els.settingsSignInBtn.classList.toggle("hidden", signedIn);
+    els.signOutBtn.classList.toggle("hidden", !signedIn);
+    els.settingsSignOutBtn.classList.toggle("hidden", !signedIn);
+
+    if (signedIn) {
+      const name = user.displayName || "Google user";
+      const email = user.email || "No email available";
+      const photo = user.photoURL
+        ? `<img src="${escapeHtml(user.photoURL)}" alt="">`
+        : `<div class="subject-icon">${escapeHtml(name.charAt(0).toUpperCase())}</div>`;
+      els.profileCard.classList.remove("signed-out");
+      els.profileCard.innerHTML = `
+        ${photo}
+        <div class="profile-copy">
+          <strong>${escapeHtml(name)}</strong>
+          <span>${escapeHtml(email)}</span>
+        </div>
+      `;
+      els.cloudHelpText.textContent = `Signed in as ${email}. Your tracker is isolated under users/${user.uid}.`;
+    } else {
+      els.profileCard.classList.add("signed-out");
+      els.profileCard.innerHTML = `
+        <div class="profile-copy">
+          <strong>Not signed in</strong>
+          <span>Local backup active</span>
+        </div>
+      `;
+      els.cloudHelpText.textContent = "Sign in to sync this tracker across your devices.";
     }
   }
 
@@ -292,6 +520,7 @@
     renderNavigation();
     renderDashboard();
     renderSubjects();
+    renderAuth();
     els.streakCount.textContent = state.data.streak?.count || 0;
   }
 
@@ -810,12 +1039,14 @@
   function rekeySubject(subject) {
     subject.id = uid("subject");
     subject.createdAt = Date.now();
+    subject.updatedAt = Date.now();
     subject.topics.forEach(rekeyTopic);
   }
 
   function rekeyTopic(topic) {
     topic.id = uid("topic");
     topic.createdAt = Date.now();
+    topic.updatedAt = Date.now();
     topic.subtopics.forEach(subtopic => {
       subtopic.id = uid("subtopic");
       subtopic.updatedAt = Date.now();
@@ -906,6 +1137,10 @@
     els.newSubjectBtn.addEventListener("click", createSubject);
     els.quickTopicBtn.addEventListener("click", () => createTopic());
     els.quickSubtopicBtn.addEventListener("click", () => createSubtopic());
+    els.signInBtn.addEventListener("click", signInWithGoogle);
+    els.settingsSignInBtn.addEventListener("click", signInWithGoogle);
+    els.signOutBtn.addEventListener("click", signOut);
+    els.settingsSignOutBtn.addEventListener("click", signOut);
     els.subjectGrid.addEventListener("click", handleClick);
     els.subjectGrid.addEventListener("change", handleChange);
     els.subjectGrid.addEventListener("dragstart", handleDragStart);
@@ -936,12 +1171,17 @@
       });
     });
     els.resetAllBtn.addEventListener("click", () => {
-      if (!confirm("Reset all local study progress?")) return;
+      if (!confirm("Reset all tracker data? This also syncs the reset if you are signed in.")) return;
       mutate("All data reset.", () => {
         state.data = { version: 1, streak: { count: 0, lastStudyDate: null }, recent: [], subjects: [] };
         state.expandedTopics.clear();
       });
     });
+    window.addEventListener("online", () => {
+      if (cloud.user && cloud.ready) scheduleCloudSync();
+      else setSyncStatus("offline", "Offline");
+    });
+    window.addEventListener("offline", () => setSyncStatus("offline", "Offline"));
     document.addEventListener("keydown", event => {
       const typing = ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
       if (event.key === "/" && !typing) {
@@ -958,5 +1198,6 @@
   }
 
   bindEvents();
+  initFirebase();
   render();
 })();
