@@ -10,9 +10,9 @@
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-       <img src="logo.png" class="brand-logo" alt="Logo">
+        <div class="brand-mark">SP</div>
         <div>
-          <h1>IAL Study Progress</h1>
+          <h1>Study Progress</h1>
           <p>A-Level prep tracker</p>
         </div>
       </div>
@@ -38,6 +38,9 @@
         </button>
         <button class="nav-item" data-view="subjects" type="button">
           <span class="nav-icon">S</span><span>Subjects</span>
+        </button>
+        <button class="nav-item" data-view="focus" type="button">
+          <span class="nav-icon">F</span><span>Focus</span>
         </button>
         <button class="nav-item" data-view="settings" type="button">
           <span class="nav-icon">T</span><span>Settings</span>
@@ -95,112 +98,3 @@
             </div>
             <div class="activity-list" id="recentList"></div>
           </div>
-          <div class="glass-panel">
-            <div class="section-head">
-              <div>
-                <p class="panel-kicker">Subjects</p>
-                <h3>Completion Snapshot</h3>
-              </div>
-            </div>
-            <div class="snapshot-list" id="snapshotList"></div>
-          </div>
-        </section>
-      </section>
-
-      <section class="view" id="subjectsView">
-        <div class="toolbar glass-panel">
-          <label class="search-box">
-            <span>Search</span>
-            <input id="globalSearch" type="search" placeholder="Subjects, topics, subtopics">
-          </label>
-          <div class="filter-tabs" role="group" aria-label="Completion filter">
-            <button class="filter-btn active" data-filter="all" type="button">All</button>
-            <button class="filter-btn" data-filter="completed" type="button">Completed</button>
-            <button class="filter-btn" data-filter="incomplete" type="button">Incomplete</button>
-          </div>
-        </div>
-        <div class="subject-grid" id="subjectGrid"></div>
-      </section>
-
-      <section class="view" id="settingsView">
-        <div class="settings-grid">
-          <section class="glass-panel">
-            <p class="panel-kicker">Backup</p>
-            <h3>Export / Import</h3>
-            <p class="muted">Download your full tracker as JSON, or restore a previous backup.</p>
-            <div class="button-row">
-              <button class="primary-btn" id="exportBtn" type="button">Export Progress</button>
-              <label class="file-btn">
-                Import Progress
-                <input id="importInput" type="file" accept="application/json">
-              </label>
-            </div>
-          </section>
-          <section class="glass-panel">
-            <p class="panel-kicker">Data</p>
-            <h3>Manage Tracker</h3>
-            <p class="muted">Changes are saved locally and sync to your account when signed in.</p>
-            <div class="button-row">
-              <button class="ghost-btn" id="loadSampleBtn" type="button">Load Sample Syllabus</button>
-              <button class="danger-btn" id="resetAllBtn" type="button">Reset All Data</button>
-            </div>
-          </section>
-          <section class="glass-panel account-settings">
-            <p class="panel-kicker">Cloud</p>
-            <h3>Account Sync</h3>
-            <p class="muted" id="cloudHelpText">Sign in to sync this tracker across your devices.</p>
-            <div class="button-row">
-              <button class="primary-btn" id="settingsSignInBtn" type="button">Sign in with Google</button>
-              <button class="ghost-btn hidden" id="settingsSignOutBtn" type="button">Sign Out</button>
-            </div>
-          </section>
-          <section class="glass-panel shortcuts-panel">
-            <p class="panel-kicker">Keyboard</p>
-            <h3>Shortcuts</h3>
-            <div class="shortcut-list">
-              <div><kbd>N</kbd><span>New subject</span></div>
-              <div><kbd>/</kbd><span>Search subjects</span></div>
-              <div><kbd>1</kbd><span>Dashboard</span></div>
-              <div><kbd>2</kbd><span>Subjects</span></div>
-              <div><kbd>3</kbd><span>Settings</span></div>
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <dialog class="modal" id="entityModal">
-    <form method="dialog" class="modal-card" id="entityForm">
-      <div class="modal-head">
-        <h3 id="modalTitle">New Item</h3>
-        <button class="icon-btn" value="cancel" type="button" id="closeModal" aria-label="Close">×</button>
-      </div>
-      <label class="field">
-        <span>Name</span>
-        <input id="entityName" type="text" required maxlength="80" autocomplete="off">
-      </label>
-      <label class="field optional-field" id="entityIconField">
-        <span>Icon</span>
-        <input id="entityIcon" type="text" maxlength="4" autocomplete="off">
-      </label>
-      <label class="field optional-field" id="entityColorField">
-        <span>Color tag</span>
-        <input id="entityColor" type="color" value="#3B82F6">
-      </label>
-      <div class="modal-actions">
-        <button class="ghost-btn" value="cancel" type="button" id="cancelModal">Cancel</button>
-        <button class="primary-btn" value="default" type="submit">Save</button>
-      </div>
-    </form>
-  </dialog>
-
-  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
-  <div class="confetti-layer" id="confettiLayer" aria-hidden="true"></div>
-
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-  <script src="app.js"></script>
-</body>
-</html>
