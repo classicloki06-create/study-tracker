@@ -7,6 +7,26 @@
     recent: [],
     subjects: []
   };
+  const DEFAULT_FOCUS = {
+    pomodoro: {
+      settings: {
+        workMinutes: 50,
+        shortBreakMinutes: 10,
+        longBreakMinutes: 20,
+        sessionsBeforeLongBreak: 4,
+        sound: false,
+        notifications: false,
+        autoStart: false
+      },
+      stats: {
+        completedSessions: 0
+      }
+    },
+    planner: {
+      date: "",
+      tasks: []
+    }
+  };
 
   const firebaseConfig = {
     apiKey: "AIzaSyDuCZskv_60ZvBhjPVAzwOj80Vsgb8lLX0",
@@ -24,6 +44,8 @@
     views: {
       dashboard: document.getElementById("dashboardView"),
       subjects: document.getElementById("subjectsView"),
+      subjectDetail: document.getElementById("subjectDetailView"),
+      focus: document.getElementById("focusView"),
       settings: document.getElementById("settingsView")
     },
     viewEyebrow: document.getElementById("viewEyebrow"),
@@ -37,6 +59,7 @@
     recentList: document.getElementById("recentList"),
     snapshotList: document.getElementById("snapshotList"),
     subjectGrid: document.getElementById("subjectGrid"),
+    subjectDetailShell: document.getElementById("subjectDetailShell"),
     globalSearch: document.getElementById("globalSearch"),
     filterBtns: [...document.querySelectorAll(".filter-btn")],
     newSubjectBtn: document.getElementById("newSubjectBtn"),
@@ -55,6 +78,26 @@
     settingsSignInBtn: document.getElementById("settingsSignInBtn"),
     settingsSignOutBtn: document.getElementById("settingsSignOutBtn"),
     cloudHelpText: document.getElementById("cloudHelpText"),
+    timerModeLabel: document.getElementById("timerModeLabel"),
+    pomodoroSessions: document.getElementById("pomodoroSessions"),
+    timerDisplay: document.getElementById("timerDisplay"),
+    timerStartBtn: document.getElementById("timerStartBtn"),
+    timerPauseBtn: document.getElementById("timerPauseBtn"),
+    timerResumeBtn: document.getElementById("timerResumeBtn"),
+    timerResetBtn: document.getElementById("timerResetBtn"),
+    workDurationInput: document.getElementById("workDurationInput"),
+    shortBreakInput: document.getElementById("shortBreakInput"),
+    longBreakInput: document.getElementById("longBreakInput"),
+    sessionsBeforeLongInput: document.getElementById("sessionsBeforeLongInput"),
+    soundToggle: document.getElementById("soundToggle"),
+    notificationToggle: document.getElementById("notificationToggle"),
+    autoStartToggle: document.getElementById("autoStartToggle"),
+    taskForm: document.getElementById("taskForm"),
+    taskInput: document.getElementById("taskInput"),
+    taskList: document.getElementById("taskList"),
+    taskCountText: document.getElementById("taskCountText"),
+    taskPercentText: document.getElementById("taskPercentText"),
+    taskProgressBar: document.getElementById("taskProgressBar"),
     modal: document.getElementById("entityModal"),
     form: document.getElementById("entityForm"),
     modalTitle: document.getElementById("modalTitle"),
@@ -74,10 +117,18 @@
     view: "dashboard",
     filter: "all",
     search: "",
+    selectedSubjectId: null,
     expandedTopics: new Set(),
     modal: null,
     draggedTopic: null,
     draggedSubtopic: null,
+    draggedTaskId: null,
+    timer: {
+      mode: "work",
+      remaining: 0,
+      running: false,
+      intervalId: null
+    },
     localRevision: 0
   };
 
@@ -192,8 +243,55 @@
             updatedAt: subtopic.updatedAt || Date.now()
           }))
         }))
-      }))
+      })),
+      focus: normalizeFocus(source.focus)
     };
+  }
+
+  function normalizeFocus(focus) {
+    const source = focus && typeof focus === "object" ? focus : {};
+    const pomodoro = source.pomodoro && typeof source.pomodoro === "object" ? source.pomodoro : {};
+    const settings = pomodoro.settings && typeof pomodoro.settings === "object" ? pomodoro.settings : {};
+    const stats = pomodoro.stats && typeof pomodoro.stats === "object" ? pomodoro.stats : {};
+    const planner = source.planner && typeof source.planner === "object" ? source.planner : {};
+    const defaultSettings = DEFAULT_FOCUS.pomodoro.settings;
+
+    return {
+      pomodoro: {
+        settings: {
+          workMinutes: clampNumber(settings.workMinutes, defaultSettings.workMinutes, 1, 180),
+          shortBreakMinutes: clampNumber(settings.shortBreakMinutes, defaultSettings.shortBreakMinutes, 1, 90),
+          longBreakMinutes: clampNumber(settings.longBreakMinutes, defaultSettings.longBreakMinutes, 1, 180),
+          sessionsBeforeLongBreak: clampNumber(settings.sessionsBeforeLongBreak, defaultSettings.sessionsBeforeLongBreak, 1, 12),
+          sound: Boolean(settings.sound),
+          notifications: Boolean(settings.notifications),
+          autoStart: Boolean(settings.autoStart)
+        },
+        stats: {
+          completedSessions: Math.max(0, Number(stats.completedSessions) || 0)
+        }
+      },
+      planner: {
+        date: planner.date || todayKey(),
+        tasks: normalizeTasks(planner.date === todayKey() ? planner.tasks : [])
+      }
+    };
+  }
+
+  function normalizeTasks(tasks) {
+    return Array.isArray(tasks) ? tasks.map(task => ({
+      id: task.id || uid("task"),
+      text: task.text || "Untitled task",
+      completed: Boolean(task.completed),
+      createdAt: task.createdAt || Date.now(),
+      updatedAt: task.updatedAt || Date.now()
+    })) : [];
+  }
+
+  function clampNumber(value, fallback, min, max) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(number)));
   }
 
   function saveData() {
@@ -520,6 +618,8 @@
     renderNavigation();
     renderDashboard();
     renderSubjects();
+    renderSubjectDetail();
+    renderFocus();
     renderAuth();
     els.streakCount.textContent = state.data.streak?.count || 0;
   }
@@ -528,12 +628,22 @@
     const titles = {
       dashboard: ["Dashboard", "Exam Preparation Overview"],
       subjects: ["Subjects", "Syllabus Workspace"],
+      subjectDetail: ["Subjects", selectedSubjectTitle()],
+      focus: ["Focus", "Timer and Daily Planner"],
       settings: ["Settings", "Backup and Preferences"]
     };
-    els.navItems.forEach(item => item.classList.toggle("active", item.dataset.view === state.view));
+    els.navItems.forEach(item => {
+      const active = item.dataset.view === state.view || (state.view === "subjectDetail" && item.dataset.view === "subjects");
+      item.classList.toggle("active", active);
+    });
     Object.entries(els.views).forEach(([view, element]) => element.classList.toggle("active", view === state.view));
     els.viewEyebrow.textContent = titles[state.view][0];
     els.viewTitle.textContent = titles[state.view][1];
+  }
+
+  function selectedSubjectTitle() {
+    const subject = findSubject(state.selectedSubjectId);
+    return subject ? subject.name : "Subject Workspace";
   }
 
   function renderDashboard() {
@@ -597,6 +707,25 @@
 
   function renderSubjectCard(subject) {
     const stats = subjectStats(subject);
+    return `
+      <article class="subject-card subject-summary-card ${stats.isComplete ? "completed" : ""}" data-subject-id="${subject.id}" data-action="open-subject" tabindex="0" role="button">
+        <div class="subject-head">
+          <div class="subject-title">
+            <div class="subject-icon">${escapeHtml(subject.icon || subject.name.charAt(0).toUpperCase())}</div>
+            <div>
+              <h3>${escapeHtml(subject.name)}</h3>
+              <span class="status-badge ${stats.isComplete ? "done" : ""}">${stats.isComplete ? "Completed" : "In Progress"}</span>
+            </div>
+          </div>
+          <strong class="subject-percent">${stats.percent}%</strong>
+        </div>
+        <div class="subject-meta">
+          <span>${stats.completed} / ${stats.total} Topics Complete</span>
+          <span>${subject.topics.length} total topics</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" style="width:${stats.percent}%"></div></div>
+      </article>
+    `;
     const topics = subject.topics.filter(topic => {
       const query = state.search.trim().toLowerCase();
       const topicMatch = !query || [
@@ -636,6 +765,51 @@
           </div>
         </div>
       </article>
+    `;
+  }
+
+  function renderSubjectDetail() {
+    const subject = findSubject(state.selectedSubjectId);
+    if (!subject) {
+      els.subjectDetailShell.innerHTML = `
+        <section class="glass-panel">
+          <p class="panel-kicker">Subject Workspace</p>
+          <h3>No subject selected</h3>
+          <p class="muted">Choose a subject to view topics, subtopics, and checklists.</p>
+          <button class="primary-btn" data-action="back-to-subjects" type="button">Back to Subjects</button>
+        </section>
+      `;
+      return;
+    }
+
+    const stats = subjectStats(subject);
+    els.subjectDetailShell.innerHTML = `
+      <section class="glass-panel detail-hero" data-subject-id="${subject.id}">
+        <div class="detail-title">
+          <button class="ghost-btn" data-action="back-to-subjects" type="button">Back</button>
+          <div class="subject-icon large">${escapeHtml(subject.icon || subject.name.charAt(0).toUpperCase())}</div>
+          <div>
+            <p class="panel-kicker">Subject Workspace</p>
+            <h3>${escapeHtml(subject.name)}</h3>
+            <p class="muted">${stats.completed} of ${stats.total} topics complete.</p>
+          </div>
+        </div>
+        <div class="detail-actions">
+          <button class="mini-btn" data-action="add-topic" type="button">+ Topic</button>
+          <button class="mini-btn" data-action="duplicate-subject" type="button">Duplicate</button>
+          <button class="mini-btn" data-action="edit-subject" type="button">Edit</button>
+          <button class="mini-btn" data-action="delete-subject" type="button">Delete</button>
+        </div>
+        <div class="detail-progress">
+          <strong>${stats.percent}%</strong>
+          <div class="progress-track"><div class="progress-fill" style="width:${stats.percent}%"></div></div>
+        </div>
+      </section>
+      <section class="subject-body detail-topics" data-subject-id="${subject.id}">
+        <div class="topic-list" data-topic-list="${subject.id}">
+          ${subject.topics.length ? subject.topics.map(topic => renderTopicCard(subject, topic)).join("") : `<div class="empty-state">No topics yet. Add one to start building this subject.</div>`}
+        </div>
+      </section>
     `;
   }
 
@@ -721,13 +895,13 @@
   }
 
   function createTopic(subjectId) {
-    const subject = subjectId ? findSubject(subjectId) : state.data.subjects[0];
+    const subject = subjectId ? findSubject(subjectId) : findSubject(state.selectedSubjectId) || state.data.subjects[0];
     if (!subject) return toast("Create a subject first.");
     openEntityModal({ mode: "create", type: "topic", title: `New Topic in ${subject.name}`, subjectId: subject.id });
   }
 
   function createSubtopic(subjectId, topicId) {
-    const subject = subjectId ? findSubject(subjectId) : state.data.subjects[0];
+    const subject = subjectId ? findSubject(subjectId) : findSubject(state.selectedSubjectId) || state.data.subjects[0];
     const topic = topicId ? findTopic(subjectId, topicId) : subject?.topics[0];
     if (!subject || !topic) return toast("Create a topic first.");
     openEntityModal({ mode: "create", type: "subtopic", title: `New Subtopic in ${topic.name}`, subjectId: subject.id, topicId: topic.id });
@@ -818,9 +992,20 @@
     const topicId = topicEl?.dataset.topicId;
     const subtopicId = subtopicEl?.dataset.subtopicId;
 
+    if (action === "open-subject") {
+      state.selectedSubjectId = subjectId;
+      setView("subjectDetail");
+      return;
+    }
+
+    if (action === "back-to-subjects") {
+      setView("subjects");
+      return;
+    }
+
     if (action === "toggle-topic") {
       state.expandedTopics.has(topicId) ? state.expandedTopics.delete(topicId) : state.expandedTopics.add(topicId);
-      renderSubjects();
+      renderSubjectDetail();
       return;
     }
 
@@ -847,6 +1032,7 @@
       if (!confirm(`Delete ${subject.name} and all of its topics?`)) return;
       return mutate("Subject deleted.", () => {
         state.data.subjects = state.data.subjects.filter(item => item.id !== subjectId);
+        if (state.selectedSubjectId === subjectId) state.selectedSubjectId = null;
         addRecent("Subject deleted", subject.name);
       });
     }
@@ -1085,6 +1271,232 @@
     reader.readAsText(file);
   }
 
+  function focusData() {
+    state.data.focus = normalizeFocus(state.data.focus);
+    return state.data.focus;
+  }
+
+  function renderFocus() {
+    const focus = focusData();
+    const settings = focus.pomodoro.settings;
+    const duration = timerDurationSeconds(state.timer.mode);
+    if (!state.timer.remaining) state.timer.remaining = duration;
+
+    els.timerModeLabel.textContent = state.timer.mode === "work"
+      ? "Work Session"
+      : state.timer.mode === "longBreak"
+        ? "Long Break"
+        : "Short Break";
+    els.pomodoroSessions.textContent = focus.pomodoro.stats.completedSessions;
+    els.timerDisplay.textContent = formatSeconds(state.timer.remaining);
+    els.workDurationInput.value = settings.workMinutes;
+    els.shortBreakInput.value = settings.shortBreakMinutes;
+    els.longBreakInput.value = settings.longBreakMinutes;
+    els.sessionsBeforeLongInput.value = settings.sessionsBeforeLongBreak;
+    els.soundToggle.checked = settings.sound;
+    els.notificationToggle.checked = settings.notifications;
+    els.autoStartToggle.checked = settings.autoStart;
+    els.timerStartBtn.disabled = state.timer.running;
+    els.timerPauseBtn.disabled = !state.timer.running;
+    els.timerResumeBtn.disabled = state.timer.running || state.timer.remaining === duration;
+
+    const tasks = focus.planner.tasks;
+    const completed = tasks.filter(task => task.completed).length;
+    const percent = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+    els.taskCountText.textContent = `${completed} / ${tasks.length}`;
+    els.taskPercentText.textContent = `${percent}%`;
+    els.taskProgressBar.style.width = `${percent}%`;
+    els.taskList.innerHTML = tasks.length
+      ? tasks.map(renderTask).join("")
+      : `<div class="empty-state">No tasks for today yet.</div>`;
+  }
+
+  function renderTask(task) {
+    return `
+      <div class="task-item ${task.completed ? "completed" : ""}" data-task-id="${task.id}" draggable="true">
+        <label class="check-wrap">
+          <input type="checkbox" data-action="toggle-task" ${task.completed ? "checked" : ""}>
+          <span class="fake-check">✓</span>
+        </label>
+        <div class="task-text">${escapeHtml(task.text)}</div>
+        <div class="task-actions">
+          <button class="mini-btn" data-action="edit-task" type="button">Edit</button>
+          <button class="mini-btn" data-action="delete-task" type="button">Delete</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function timerDurationSeconds(mode = state.timer.mode) {
+    const settings = focusData().pomodoro.settings;
+    if (mode === "shortBreak") return settings.shortBreakMinutes * 60;
+    if (mode === "longBreak") return settings.longBreakMinutes * 60;
+    return settings.workMinutes * 60;
+  }
+
+  function formatSeconds(totalSeconds) {
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function startTimer() {
+    if (state.timer.running) return;
+    if (!state.timer.remaining) state.timer.remaining = timerDurationSeconds();
+    state.timer.running = true;
+    state.timer.intervalId = setInterval(tickTimer, 1000);
+    renderFocus();
+  }
+
+  function pauseTimer() {
+    clearInterval(state.timer.intervalId);
+    state.timer.intervalId = null;
+    state.timer.running = false;
+    renderFocus();
+  }
+
+  function resetTimer() {
+    pauseTimer();
+    state.timer.mode = "work";
+    state.timer.remaining = timerDurationSeconds("work");
+    renderFocus();
+  }
+
+  function tickTimer() {
+    state.timer.remaining = Math.max(0, state.timer.remaining - 1);
+    els.timerDisplay.textContent = formatSeconds(state.timer.remaining);
+    if (state.timer.remaining > 0) return;
+    completeTimerSession();
+  }
+
+  function completeTimerSession() {
+    pauseTimer();
+    const previousMode = state.timer.mode;
+    mutate(previousMode === "work" ? "Work session complete." : "Break complete.", () => {
+      const focus = focusData();
+      if (previousMode === "work") {
+        focus.pomodoro.stats.completedSessions += 1;
+        const beforeLong = focus.pomodoro.settings.sessionsBeforeLongBreak;
+        state.timer.mode = focus.pomodoro.stats.completedSessions % beforeLong === 0 ? "longBreak" : "shortBreak";
+      } else {
+        state.timer.mode = "work";
+      }
+      state.timer.remaining = timerDurationSeconds(state.timer.mode);
+    });
+    notifyTimer(previousMode);
+    if (focusData().pomodoro.settings.autoStart) startTimer();
+  }
+
+  function notifyTimer(mode) {
+    const settings = focusData().pomodoro.settings;
+    const message = mode === "work" ? "Work session complete." : "Break complete.";
+    if (settings.sound) {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const audio = new AudioContextClass();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        gain.gain.value = 0.08;
+        oscillator.frequency.value = 740;
+        oscillator.start();
+        oscillator.stop(audio.currentTime + 0.18);
+      } catch {}
+    }
+    if (settings.notifications && "Notification" in window) {
+      if (Notification.permission === "granted") new Notification("Study Progress Tracker", { body: message });
+      if (Notification.permission === "default") Notification.requestPermission();
+    }
+  }
+
+  function updateTimerSettings() {
+    mutate(null, () => {
+      const settings = focusData().pomodoro.settings;
+      settings.workMinutes = clampNumber(els.workDurationInput.value, settings.workMinutes, 1, 180);
+      settings.shortBreakMinutes = clampNumber(els.shortBreakInput.value, settings.shortBreakMinutes, 1, 90);
+      settings.longBreakMinutes = clampNumber(els.longBreakInput.value, settings.longBreakMinutes, 1, 180);
+      settings.sessionsBeforeLongBreak = clampNumber(els.sessionsBeforeLongInput.value, settings.sessionsBeforeLongBreak, 1, 12);
+      settings.sound = els.soundToggle.checked;
+      settings.notifications = els.notificationToggle.checked;
+      settings.autoStart = els.autoStartToggle.checked;
+      if (!state.timer.running) state.timer.remaining = timerDurationSeconds(state.timer.mode);
+    });
+  }
+
+  function addTask(text) {
+    mutate("Task added.", () => {
+      focusData().planner.tasks.push({
+        id: uid("task"),
+        text,
+        completed: false,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+    });
+  }
+
+  function handleTaskAction(event) {
+    const input = event.target.closest('[data-action="toggle-task"]');
+    if (!input) return;
+    const taskId = input.closest("[data-task-id]")?.dataset.taskId;
+    mutate(input.checked ? "Task complete." : "Task reopened.", () => {
+      const task = focusData().planner.tasks.find(item => item.id === taskId);
+      if (!task) return;
+      task.completed = input.checked;
+      task.updatedAt = Date.now();
+    });
+  }
+
+  function handleTaskClick(event) {
+    const button = event.target.closest("[data-action]");
+    if (!button) return;
+    const action = button.dataset.action;
+    const taskId = button.closest("[data-task-id]")?.dataset.taskId;
+    if (action === "edit-task") {
+      const task = focusData().planner.tasks.find(item => item.id === taskId);
+      if (!task) return;
+      const next = prompt("Edit task", task.text);
+      if (next === null || !next.trim()) return;
+      mutate("Task updated.", () => {
+        task.text = next.trim();
+        task.updatedAt = Date.now();
+      });
+    }
+    if (action === "delete-task") {
+      mutate("Task deleted.", () => {
+        focusData().planner.tasks = focusData().planner.tasks.filter(item => item.id !== taskId);
+      });
+    }
+  }
+
+  function handleTaskDragStart(event) {
+    const task = event.target.closest(".task-item");
+    if (!task) return;
+    state.draggedTaskId = task.dataset.taskId;
+    task.classList.add("dragging");
+    event.dataTransfer.effectAllowed = "move";
+  }
+
+  function handleTaskDragOver(event) {
+    if (state.draggedTaskId && event.target.closest(".task-item")) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    }
+  }
+
+  function handleTaskDrop(event) {
+    const target = event.target.closest(".task-item");
+    if (!state.draggedTaskId || !target) return;
+    event.preventDefault();
+    mutate("Tasks reordered.", () => moveItem(focusData().planner.tasks, state.draggedTaskId, target.dataset.taskId));
+  }
+
+  function handleTaskDragEnd() {
+    document.querySelectorAll(".task-item.dragging").forEach(el => el.classList.remove("dragging"));
+    state.draggedTaskId = null;
+  }
+
   function setView(view) {
     state.view = view;
     els.sidebar.classList.remove("open");
@@ -1142,6 +1554,18 @@
     els.signOutBtn.addEventListener("click", signOut);
     els.settingsSignOutBtn.addEventListener("click", signOut);
     els.subjectGrid.addEventListener("click", handleClick);
+    els.subjectGrid.addEventListener("keydown", event => {
+      if ((event.key === "Enter" || event.key === " ") && event.target.closest('[data-action="open-subject"]')) {
+        event.preventDefault();
+        handleClick(event);
+      }
+    });
+    els.subjectDetailShell.addEventListener("click", handleClick);
+    els.subjectDetailShell.addEventListener("change", handleChange);
+    els.subjectDetailShell.addEventListener("dragstart", handleDragStart);
+    els.subjectDetailShell.addEventListener("dragover", handleDragOver);
+    els.subjectDetailShell.addEventListener("drop", handleDrop);
+    els.subjectDetailShell.addEventListener("dragend", handleDragEnd);
     els.subjectGrid.addEventListener("change", handleChange);
     els.subjectGrid.addEventListener("dragstart", handleDragStart);
     els.subjectGrid.addEventListener("dragover", handleDragOver);
@@ -1163,18 +1587,46 @@
     els.cancelModal.addEventListener("click", closeModal);
     els.exportBtn.addEventListener("click", exportProgress);
     els.importInput.addEventListener("change", event => importProgress(event.target.files[0]));
+    els.timerStartBtn.addEventListener("click", startTimer);
+    els.timerPauseBtn.addEventListener("click", pauseTimer);
+    els.timerResumeBtn.addEventListener("click", startTimer);
+    els.timerResetBtn.addEventListener("click", resetTimer);
+    [
+      els.workDurationInput,
+      els.shortBreakInput,
+      els.longBreakInput,
+      els.sessionsBeforeLongInput,
+      els.soundToggle,
+      els.notificationToggle,
+      els.autoStartToggle
+    ].forEach(input => input.addEventListener("change", updateTimerSettings));
+    els.taskForm.addEventListener("submit", event => {
+      event.preventDefault();
+      const text = els.taskInput.value.trim();
+      if (!text) return;
+      addTask(text);
+      els.taskInput.value = "";
+    });
+    els.taskList.addEventListener("click", handleTaskClick);
+    els.taskList.addEventListener("change", handleTaskAction);
+    els.taskList.addEventListener("dragstart", handleTaskDragStart);
+    els.taskList.addEventListener("dragover", handleTaskDragOver);
+    els.taskList.addEventListener("drop", handleTaskDrop);
+    els.taskList.addEventListener("dragend", handleTaskDragEnd);
     els.loadSampleBtn.addEventListener("click", () => {
       if (!confirm("Replace current tracker with the sample syllabus?")) return;
       mutate("Sample syllabus loaded.", () => {
         state.data = sampleData();
         state.expandedTopics.clear();
+        state.selectedSubjectId = null;
       });
     });
     els.resetAllBtn.addEventListener("click", () => {
       if (!confirm("Reset all tracker data? This also syncs the reset if you are signed in.")) return;
       mutate("All data reset.", () => {
-        state.data = { version: 1, streak: { count: 0, lastStudyDate: null }, recent: [], subjects: [] };
+        state.data = normalizeData({ version: 1, streak: { count: 0, lastStudyDate: null }, recent: [], subjects: [] });
         state.expandedTopics.clear();
+        state.selectedSubjectId = null;
       });
     });
     window.addEventListener("online", () => {
@@ -1193,7 +1645,8 @@
       if (event.key.toLowerCase() === "n") createSubject();
       if (event.key === "1") setView("dashboard");
       if (event.key === "2") setView("subjects");
-      if (event.key === "3") setView("settings");
+      if (event.key === "3") setView("focus");
+      if (event.key === "4") setView("settings");
     });
   }
 
